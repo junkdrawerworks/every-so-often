@@ -738,7 +738,9 @@ assert.equal(g.files().length, 2, 'still one folder and one file');
   await L.goto(base + '#/settings');
   await L.click('#driveCard [data-a="now"]');
   await until(async () => await dot(L) === 'error', 'the red dot');
-  assert.match(await L.locator('#driveCard').innerText(), /The file in your Drive isn’t readable, so it was left alone/);
+  // In a red line of its own, not at the end of the paragraph about where the list is saved.
+  assert.match(await L.locator('#driveCard p.err').innerText(), /^The file in your Drive isn’t readable, so it was left alone\./);
+  assert.doesNotMatch(await L.locator('#driveCard p').first().innerText(), /readable/, 'not in the paragraph above');
   assert.equal(g.drive.files[driveFile().id].body, whole.slice(0, 40), 'and it was left alone');
   f.body = whole;
 }
