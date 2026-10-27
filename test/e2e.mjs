@@ -4,7 +4,8 @@
 // more ago get the right dates and stickers, and the labels on tags and groups are checked for contrast, light and
 // dark, in every view. Then three devices save through a stand-in Google Drive (test/fake-google.mjs): turning it
 // on, a second device joining, edits on both, a deletion, a backup bringing it back, an expired sign-in, a sign-in
-// from another project, one for another Google account, stopping, a broken file, and erasing mid-sync.
+// from another project, one for another Google account, stopping, a broken file, erasing mid-sync, and two devices
+// that each made the Drive file at the same moment.
 import { createRequire } from 'node:module';
 import { execSync } from 'node:child_process';
 import { createServer } from 'node:http';
@@ -777,6 +778,43 @@ await eraseWhileSyncing(T2);
 
 // And the page never talked to Google away from junkdrawer.works (checked above, for the first phone).
 for (const c of [laptop, phone2, tablet]) await c.ctx.close();
+
+// ---- two devices that each made the file at the same moment ----
+// The second didn't see the first's file, so Drive ends up with two. The next sync folds the second into the first,
+// keeping the first's ids, which the device that made it already holds: nothing shows twice on either.
+{
+  const g2 = fakeGoogle();
+  const syncFiles = () => g2.files().filter(f => f.appProperties?.everysooften === 'sync' && !f.trashed);
+  const one = await device({ serviceWorkers: 'block' }, { google: g2 }), two = await device({ serviceWorkers: 'block' }, { google: g2 });
+  await one.page.goto(base);
+  await store(one.page, `s.add({ name: 'Descale the kettle', area: 'Kitchen', rule: { kind: 'every', n: 2, unit: 'month' } });
+    s.add({ name: 'Flip the mattress', area: 'Bedroom', rule: { kind: 'every', n: 6, unit: 'month' } });`);
+  await turnOn(one.page);
+  // The second device looks for the file before the first one's is there.
+  let missed = false;
+  await two.ctx.route(url => url.pathname === '/drive/v3/files', route => {
+    const r = route.request();
+    if (missed || r.method() !== 'GET' || !decodeURIComponent(r.url()).includes("value='sync'")) return route.fallback();
+    missed = true;
+    return route.fulfill({ status: 200, headers: { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' }, body: '{"files":[]}' });
+  });
+  await two.page.goto(base);
+  await store(two.page, `s.add({ name: 'Descale the kettle', area: 'Kitchen', rule: { kind: 'every', n: 2, unit: 'month' } });
+    s.add({ name: 'Test the smoke alarms', area: 'House', rule: { kind: 'every', n: 1, unit: 'month' } });`);
+  await turnOn(two.page);
+  assert.equal(syncFiles().length, 2, 'two files in Drive');
+  const all = ['Descale the kettle', 'Flip the mattress', 'Test the smoke alarms'];
+  await syncNow(one.page);
+  assert.equal(syncFiles().length, 1, 'folded into one');
+  assert.deepEqual(await names(one.page), all, 'nothing twice on the first device');
+  await syncNow(two.page);
+  assert.deepEqual(await names(two.page), all, 'nor on the second');
+  await syncNow(one.page);
+  assert.deepEqual(await names(one.page), all, 'nor on the first once the second has synced');
+  const live = Object.values(JSON.parse(syncFiles()[0].body).items).filter(x => !x.del).map(x => x.name).sort();
+  assert.deepEqual(live, all, 'nor in Drive');
+  for (const c of [one, two]) await c.ctx.close();
+}
 
 assert.deepEqual(problems.filter(p => !p.startsWith('failed:')), [], 'problems while using it');
 await browser.close();
